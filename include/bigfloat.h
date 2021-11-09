@@ -1,12 +1,18 @@
 #ifndef BIG_FLOAT_H
 #define BIG_FLOAT_H
 
-#define BIGFLOAT_PRECISION 512
+#define BIGFLOAT_PRECISION 256
+#define BIGFLOAT_DECIMAL_LIMITATION (BIGFLOAT_PRECISION / 3)
+#define BIGFLOAT_SUCCESS 0
+#define BIGFLOAT_FAILURE 1
+
+// Performs devision by using multiplication
+#define BIGFLOAT_USE_QUICK_DIVIDE 0
 
 typedef struct bigfloat
 {
 	unsigned char digits[BIGFLOAT_PRECISION];
-	short decimal;
+	unsigned short decimal;
 	unsigned char negative;
 } BigFloat;
 
@@ -19,11 +25,11 @@ enum BigFloatToString
 BigFloat *BigFloatCreate(char *);
 BigFloat *BigFloatCreateFromInt(int);
 void BigFloatFree(BigFloat *);
-void BigFloatParseString(BigFloat *, char *);
+char BigFloatParseString(BigFloat *, char *);
 char *BigFloatToString(BigFloat *, unsigned char);
-void BigFloatAdd(BigFloat *, BigFloat *, BigFloat *);
-void BigFloatSubtract(BigFloat *, BigFloat *, BigFloat *);
-void BigFloatMultiply(BigFloat *, BigFloat *, BigFloat *);
+char BigFloatAdd(BigFloat *, BigFloat *, BigFloat *);
+char BigFloatSubtract(BigFloat *, BigFloat *, BigFloat *);
+char BigFloatMultiply(BigFloat *, BigFloat *, BigFloat *);
 char BigFloatDivide(BigFloat *, BigFloat *, BigFloat *);
 char BigFloatModulo(BigFloat *, BigFloat *, BigFloat *);
 char BigFloatEquals(BigFloat *, BigFloat *);
@@ -38,6 +44,7 @@ void BigFloatIntConvert(BigFloat *);
 void BigFloatTrailingZeros(BigFloat *);
 void BigFloatShiftDownBy(char *, int, int);
 void BigFloatShiftUpBy(char *, int, int);
+void BigFloatDecimalLimiter(BigFloat *, int);
 int BigFloatToInt(BigFloat *);
 
 #endif

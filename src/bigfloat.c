@@ -10,11 +10,18 @@ BigFloat *BigFloatCreate(char *str)
 	int i;
 	BigFloat *res;
 	res = malloc(sizeof(BigFloat));
+	if (res == NULL)
+		return NULL;
+	BigFloatClear(res);
 	res->decimal = 1;
 	for (i = 0; i < BIGFLOAT_PRECISION; i++)
 		res->digits[i] = 0;
 	res->negative = 0;
-	BigFloatParseString(res, str);
+	if (BigFloatParseString(res, str))
+	{
+		free(res);
+		return NULL;
+	}
 	return res;
 }
 
@@ -26,6 +33,9 @@ BigFloat *BigFloatCreateFromInt(int value)
 	int i;
 	BigFloat *res;
 	res = malloc(sizeof(BigFloat));
+	if (res == NULL)
+		return NULL;
+	BigFloatClear(res);
 	res->decimal = 0;
 	for (i = 0; i < BIGFLOAT_PRECISION; i++)
 		res->digits[i] = 0;
@@ -50,40 +60,55 @@ void BigFloatFree(BigFloat *b)
 {
 	if (b != NULL)
 		free(b);
+	b = NULL;
 }
 
 /*
 * Parses in a string representing a floating point number and creates a
 * BigFloat out of the string representation.
 */
-void BigFloatParseString(BigFloat *b, char *str)
+char BigFloatParseString(BigFloat *b, char *str)
 {
 	if (str == NULL)
 	{
 		BigFloatClear(b);
 		b->negative = 0;
 		b->decimal = 1;
-		return;
+		return BIGFLOAT_SUCCESS;
 	}
 	b->decimal = 0;
 	int i = 0;
 	int index = 0;
-	if (str[0] == '-')
+	if (str[0] == '.')
+	{
+		b->digits[index] = 0;
+		b->decimal = 1;
+		index = 1;
+		i = 1;
+	}
+	else if (str[0] == '-')
 	{
 		b->negative = 1;
 		i = 1;
 	}
 	else
 		b->negative = 0;
-	for (; i < strlen(str) && index < BIGFLOAT_PRECISION; i++)
+	for (; i < strlen(str); i++)
 	{
+		if (index == (BIGFLOAT_PRECISION + b->negative) && (b->decimal != 0 || index > (BIGFLOAT_PRECISION + b->negative)))
+			return BIGFLOAT_FAILURE;
 		if (str[i] == '.')
 			b->decimal = (b->negative) ? i - 1 : i;
 		else
-			b->digits[index++] = str[i] - '0';
+		{
+			b->digits[index] = str[i] - '0';
+			if (b->digits[index++] > 9)
+				return 1;
+		}
 	}
 	if (b->decimal == 0)
 		b->decimal = (strlen(str) - b->negative);
+	return BIGFLOAT_SUCCESS;
 }
 
 /*
@@ -133,7 +158,7 @@ char *BigFloatToString(BigFloat *b, unsigned char decimals)
 /*
 * Adds two BigFloats and puts the result in the first parameter.
 */
-void BigFloatAdd(BigFloat *a, BigFloat *b, BigFloat *res)
+char BigFloatAdd(BigFloat *a, BigFloat *b, BigFloat *res)
 {
 	int i, result;
 	int carry = 0;
@@ -143,13 +168,18 @@ void BigFloatAdd(BigFloat *a, BigFloat *b, BigFloat *res)
 	unsigned char additionType = (a->negative + b->negative);
 	if (additionType != 1)
 	{
-		for (i = BIGFLOAT_PRECISION - 1; i >= 0; i--)
+		unsigned char carry_end = 2;
+		for (i = (BIGFLOAT_PRECISION - 1); i >= 0; i--)
 		{
 			result = carry;
 			result += a->digits[i] + b->digits[i];
 			carry = result / 10;
 			res->digits[i] = result % 10;
+			if (carry_end == 2)
+				carry_end = (carry == 1);
 		}
+		if (carry_end)
+			return BIGFLOAT_FAILURE;
 		if (carry != 0)
 		{
 			BigFloatShiftDownBy((char *)res->digits, BIGFLOAT_PRECISION, 1);
@@ -174,12 +204,13 @@ void BigFloatAdd(BigFloat *a, BigFloat *b, BigFloat *res)
 		BigFloatSubtract(a, b, res);
 		a->negative = 0;
 	}
+	return BIGFLOAT_SUCCESS;
 }
 
 /*
 * Subtract b from a and return a new BigFloat as the result.
 */
-void BigFloatSubtract(BigFloat *a, BigFloat *b, BigFloat *res)
+char BigFloatSubtract(BigFloat *a, BigFloat *b, BigFloat *res)
 {
 	int i, result;
 	int carry = 0;
@@ -187,6 +218,21 @@ void BigFloatSubtract(BigFloat *a, BigFloat *b, BigFloat *res)
 	BigFloatStandardizeDecimal(a, b);
 	BigFloatClear(res);
 	res->decimal = a->decimal;
+	if (a->negative && !b->negative)
+	{
+		a->negative = 0;
+		i = BigFloatAdd(a, b, res);
+		a->negative = 1;
+		res->negative = 1;
+		return i;
+	}
+	else if (!a->negative && b->negative)
+	{
+		b->negative = 0;
+		i = BigFloatAdd(a, b, res);
+		b->negative = 1;
+		return i;
+	}
 	if (BigFloatCompare(a, b) >= 0)
 	{
 		top = a;
@@ -198,7 +244,7 @@ void BigFloatSubtract(BigFloat *a, BigFloat *b, BigFloat *res)
 		bottom = a;
 		res->negative = 1;
 	}
-	for (i = BIGFLOAT_PRECISION - 1; i >= 0; i--)
+	for (i = (BIGFLOAT_PRECISION - 1); i >= 0; i--)
 	{
 		result = carry + top->digits[i];
 		if (result < bottom->digits[i])
@@ -215,42 +261,93 @@ void BigFloatSubtract(BigFloat *a, BigFloat *b, BigFloat *res)
 	BigFloatTrailingZeros(a);
 	BigFloatTrailingZeros(b);
 	BigFloatTrailingZeros(res);
+	return BIGFLOAT_SUCCESS;
 }
 
-void BigFloatMultiply(BigFloat *a, BigFloat *b, BigFloat *res)
+char BigFloatMultiply(BigFloat *a, BigFloat *b, BigFloat *res)
 {
-	int i;
+	int i = 0;
 	BigFloat *line = BigFloatCreate(NULL);
+	if (line == NULL)
+		return BIGFLOAT_FAILURE;
+	BigFloat *one = BigFloatCreate("1.0");
+	if (one == NULL)
+		return BIGFLOAT_FAILURE;
 	BigFloat *temp = BigFloatCreate(NULL);
+	if (temp == NULL)
+		return BIGFLOAT_FAILURE;
+	if (BigFloatCompare(a, one) == 0)
+	{
+		memcpy(res, b, sizeof(BigFloat));
+		i = 1;
+	}
+	else if (BigFloatCompare(b, one) == 0)
+	{
+		memcpy(res, a, sizeof(BigFloat));
+		i = 1;
+	}
+	BigFloatFree(one);
+	if (i == 1)
+	{
+		BigFloatFree(temp);
+		BigFloatFree(line);
+		return BIGFLOAT_SUCCESS;
+	}
 	BigFloatClear(res);
 	res->decimal = BIGFLOAT_PRECISION;
 	line->decimal = BIGFLOAT_PRECISION;
 	BigFloatZerosFirst(a);
 	BigFloatZerosFirst(b);
-	for (i = BIGFLOAT_PRECISION - 1; i >= 0; i--)
+	for (i = (BIGFLOAT_PRECISION - 1); i >= 0; i--)
 	{
 		BigFloatMultiplyLine(a, line, b->digits[i]);
+		if (line->digits[0] > 0)
+		{
+			BigFloatFree(temp);
+			BigFloatFree(line);
+			return BIGFLOAT_FAILURE;
+		}
 		BigFloatShiftUpBy((char *)line->digits, BIGFLOAT_PRECISION, BIGFLOAT_PRECISION - i);
-		BigFloatAdd(res, line, temp);
+		if (BigFloatAdd(res, line, temp))
+		{
+			BigFloatFree(temp);
+			BigFloatFree(line);
+			return BIGFLOAT_FAILURE;
+		}
 		line->decimal = BIGFLOAT_PRECISION;
 		BigFloatZerosFirst(temp);
+		if (temp->digits[0] > 0)
+		{
+			BigFloatFree(temp);
+			BigFloatFree(line);
+			return BIGFLOAT_FAILURE;
+		}
 		memcpy(res, temp, sizeof(BigFloat));
+		BigFloatTrailingZeros(temp);
+		if (temp->decimal > BIGFLOAT_PRECISION)
+		{
+			BigFloatFree(temp);
+			BigFloatFree(line);
+			return BIGFLOAT_FAILURE;
+		}
 	}
 	res->decimal -= BIGFLOAT_PRECISION - a->decimal + BIGFLOAT_PRECISION - b->decimal + 1;
 	BigFloatTrailingZeros(a);
 	BigFloatTrailingZeros(b);
 	BigFloatTrailingZeros(res);
-	BigFloatFree(line);
-	line = NULL;
-	res->negative = ((a->negative || b->negative) && !(a->negative && b->negative)) ? 1 : 0;
 	BigFloatFree(temp);
+	if (res->decimal > BIGFLOAT_PRECISION)
+		return BIGFLOAT_FAILURE;
+	BigFloatFree(line);
+	res->negative = (!a->negative != !b->negative); // XOR if either were negative
+	return BIGFLOAT_SUCCESS;
 }
 
 void BigFloatMultiplyLine(BigFloat *a, BigFloat *line, int mult)
 {
 	int i, result;
 	int carry = 0;
-	for (i = BIGFLOAT_PRECISION - 1; i >= 0; i--)
+	for (i = (BIGFLOAT_PRECISION - 1); i >= 0; i--)
 	{
 		result = carry;
 		result += a->digits[i] * mult;
@@ -261,52 +358,162 @@ void BigFloatMultiplyLine(BigFloat *a, BigFloat *line, int mult)
 
 char BigFloatDivide(BigFloat *a, BigFloat *b, BigFloat *res)
 {
-	int i, counter;
+	int i;
+	unsigned long long counter;
 	int index = 0;
 	BigFloatClear(res);
 	res->decimal = b->decimal;
 	if (BigFloatEquals(b, res)) // is equal to zero, cannot divide by zero
-		return 1;
+		return BIGFLOAT_FAILURE;
 	BigFloat *current = BigFloatCreate(NULL);
+	if (current == NULL)
+		return BIGFLOAT_FAILURE;
 	BigFloat *temp = BigFloatCreate(NULL);
-	current->decimal = 0;
+	if (temp == NULL)
+		return BIGFLOAT_FAILURE;
+	BigFloat *one = BigFloatCreateFromInt(1);
+	if (one == NULL)
+		return BIGFLOAT_FAILURE;
+	BigFloat *ten = BigFloatCreateFromInt(10);
+	if (ten == NULL)
+		return BIGFLOAT_FAILURE;
+	if (BigFloatEquals(a, b)) // is equal to itself
+	{
+		memcpy(res, one, sizeof(BigFloat));
+		BigFloatFree(one);
+		BigFloatFree(ten);
+		BigFloatFree(current);
+		BigFloatFree(temp);
+		return BIGFLOAT_SUCCESS;
+	}
+	int negative = b->negative;
+	b->negative = 0;
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+	BigFloat *c = BigFloatCreate(NULL);
+	if (c == NULL)
+		return BIGFLOAT_FAILURE;
+	memcpy(c, b, sizeof(BigFloat));
+	b->negative = negative;
+	BigFloatTrailingZeros(c);
+	BigFloatStandardizeDecimal(c, one);
+	res->decimal = one->decimal;
+#else
+	BigFloatStandardizeDecimal(a, b);
 	res->decimal = a->decimal;
+#endif
+	current->decimal = 0;
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+	int decimal = 0;
+	for (i = one->decimal; i < BIGFLOAT_PRECISION; i++)
+	{
+		int zeroed = 1;
+		for (int ii = i; ii < BIGFLOAT_PRECISION; ii++)
+		{
+			if (c->digits[ii] != 0)
+			{
+				zeroed = 0;
+				break;
+			}
+		}
+		if (zeroed == 1)
+			break;
+		BigFloatMultiply(one, ten, temp);
+		memcpy(one, temp, sizeof(BigFloat));
+		BigFloatMultiply(c, ten, temp);
+		memcpy(c, temp, sizeof(BigFloat));
+		decimal++;
+	}
+#endif
 	for (i = 0; i < BIGFLOAT_PRECISION; i++)
 	{
 		counter = 0;
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+		current->digits[index++] = one->digits[i];
+#else
 		current->digits[index++] = a->digits[i];
+#endif
 		current->decimal++;
 		BigFloatTrailingZeros(current);
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+		for (; BigFloatCompare(current, c) >= 0;)
+#else
 		for (; BigFloatCompare(current, b) >= 0;)
+#endif
 		{
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+			BigFloatSubtract(current, c, temp);
+#else
 			BigFloatSubtract(current, b, temp);
+#endif
 			memcpy(current, temp, sizeof(BigFloat));
 			counter++;
 		}
-		res->digits[i] = counter;
+		if (counter > 9)
+		{
+			int ii = 0;
+			do
+			{
+				res->digits[(i - ii)] += (counter % 10);
+				counter /= 10;
+				if ((i - ii) < 0)
+					return BIGFLOAT_FAILURE;
+				ii++;
+			} while (counter > 0);
+		}
+		else
+			res->digits[i] = counter;
+	}
+	BigFloatFree(one);
+	BigFloatFree(ten);
+	BigFloatFree(current);
+	res->negative = negative;
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+	BigFloatFree(c);
+	res->decimal += decimal;
+#else
+	b->negative = negative;
+#endif
+#if BIGFLOAT_USE_QUICK_DIVIDE == 1
+	BigFloatTrailingZeros(res);
+	memcpy(temp, res, sizeof(BigFloat));
+	// printf("TEST!\n");
+	BigFloatDecimalLimiter(temp, BIGFLOAT_DECIMAL_LIMITATION);
+	BigFloatClear(res);
+	if (BigFloatMultiply(a, temp, res) == BIGFLOAT_FAILURE)
+	{
+		BigFloatFree(temp);
+		return BIGFLOAT_FAILURE;
 	}
 	BigFloatFree(temp);
-	BigFloatFree(current);
-	BigFloatTrailingZeros(res);
+#endif
 	return 0;
 }
 
 char BigFloatModulo(BigFloat *a, BigFloat *b, BigFloat *res)
 {
 	BigFloatClear(res);
+	res->decimal = b->decimal;
 	if (BigFloatEquals(b, res)) // is equal to zero, cannot divide by zero
-		return 1;
+		return BIGFLOAT_FAILURE;
 	BigFloat *quotient = BigFloatCreate(NULL);
+	if (quotient == NULL)
+		return BIGFLOAT_FAILURE;
 	BigFloat *product = BigFloatCreate(NULL);
+	if (product == NULL)
+		return BIGFLOAT_FAILURE;
 	BigFloat *modulus = BigFloatCreateFromInt(1);
+	if (modulus == NULL)
+		return BIGFLOAT_FAILURE;
 	BigFloatDivide(a, b, quotient);
 	BigFloatIntConvert(quotient);
 	if (BigFloatCompareDifference(a, product) == -1) // less than zero
 	{
 		if (BigFloatCompareDifference(b, product)) // less than zero
-			BigFloatAdd(quotient, modulus, product);
+			if (BigFloatAdd(quotient, modulus, product) == BIGFLOAT_FAILURE)
+				return BIGFLOAT_FAILURE;
 		else
-			BigFloatSubtract(quotient, modulus, product);
+			if (BigFloatSubtract(quotient, modulus, product) == BIGFLOAT_FAILURE)
+				return BIGFLOAT_FAILURE;
 		memcpy(quotient, product, sizeof(BigFloat));
 	}
 	BigFloatMultiply(b, quotient, product);
@@ -314,7 +521,7 @@ char BigFloatModulo(BigFloat *a, BigFloat *b, BigFloat *res)
 	BigFloatFree(quotient);
 	BigFloatFree(product);
 	BigFloatFree(modulus);
-	return 0;
+	return BIGFLOAT_SUCCESS;
 }
 
 /*
@@ -367,21 +574,19 @@ char BigFloatEqualsUpTo(BigFloat *a, BigFloat *b, int decimal)
 */
 char BigFloatCompare(BigFloat *a, BigFloat *b)
 {
-	int i;
-	if (a == b)
-		return 0;
-	else
+	if (a != b)
 	{
 		if (a->decimal != b->decimal)
-			return (char)a->decimal - b->decimal;
+			return ((char)a->decimal - b->decimal);
 		else
 		{
-			for (i = 0; i < BIGFLOAT_PRECISION; i++)
+			for (int i = 0; i < BIGFLOAT_PRECISION; i++)
 				if (a->digits[i] != b->digits[i])
-					return (char)a->digits[i] - b->digits[i];
+					return ((char)a->digits[i] - b->digits[i]);
 			return 0;
 		}
 	}
+	return 0;
 }
 
 /*
@@ -394,12 +599,13 @@ char BigFloatCompareDifference(BigFloat *a, BigFloat *b)
 		return -1;
 	else if (!a->negative && b->negative)
 		return 1;
-	else if (a->digits < b->digits)
-		return !a->negative;
-	else if (a->digits > b->digits)
+	char comparison = BigFloatCompare(a, b);
+	if (comparison < 0)
+		return -!a->negative;
+	else if (comparison > 0)
 		return !b->negative;
 	else
-		return 0;
+		return comparison;
 }
 
 /*
@@ -409,7 +615,7 @@ char BigFloatCompareDifference(BigFloat *a, BigFloat *b)
 void BigFloatZerosFirst(BigFloat *a)
 {
 	int i, start;
-	for (i = BIGFLOAT_PRECISION - 1; i >= 0 && !a->digits[i]; i--)
+	for (i = (BIGFLOAT_PRECISION - 1); i >= 0 && !a->digits[i]; i--)
 		;
 	start = i;
 	BigFloatShiftDownBy((char *)a->digits, BIGFLOAT_PRECISION, BIGFLOAT_PRECISION - start - 1);
@@ -489,11 +695,27 @@ void BigFloatShiftUpBy(char *ar, int length, int shift)
 	}
 }
 
+/*
+* Limits the size of a decimal
+*/
+void BigFloatDecimalLimiter(BigFloat *a, int decimal)
+{
+	int i, count;
+	BigFloatTrailingZeros(a);
+	count = 0;
+	for (i = a->decimal; i < BIGFLOAT_PRECISION; i++)
+	{
+		if (count++ > decimal)
+			a->digits[i] = 0;
+	}
+}
+
 void BigFloatClear(BigFloat *a)
 {
 	int i;
 	if (a != NULL)
 	{
+		a->negative = 0;
 		for (i = 0; i < BIGFLOAT_PRECISION; i++)
 			a->digits[i] = 0;
 	}
